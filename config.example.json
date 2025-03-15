@@ -1,0 +1,8 @@
+{
+  "version": "0.2.0",
+  "defaultOutputDir": "./downloads",
+  "logLevel": "info",
+  "maxConcurrentDownloads": 2,
+  "apiPort": 3000,
+  "apiHost": "localhost"
+}

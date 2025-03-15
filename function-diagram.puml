@@ -1,0 +1,72 @@
+@startuml
+!define RECTANGLE class
+
+RECTANGLE VideoDownloader {
+    +downloadVideo(url: String): void
+    +convertVideo(format: String): void
+    +saveVideo(path: String): void
+}
+
+RECTANGLE VideoProcessor {
+    +processVideo(video: Video): void
+    +extractAudio(video: Video): Audio
+}
+
+RECTANGLE VideoStorage {
+    +storeVideo(video: Video, path: String): void
+    +retrieveVideo(path: String): Video
+}
+
+VideoDownloader --> VideoProcessor : uses
+VideoProcessor --> VideoStorage : stores
+VideoDownloader --> VideoStorage : saves
+
+RECTANGLE VideoDownloaderServer {
+    +run(): Promise<void>
+    +setupExpressApp(): void
+    +setupErrorHandler(): void
+    +setupToolHandlers(): void
+    +registerListToolsHandler(): void
+    +registerCallToolHandler(): void
+}
+
+RECTANGLE DownloadService {
+    +createTask(url: string): Promise<DownloadTask>
+    +getAllTasks(): DownloadTask[]
+    +getTask(id: string): DownloadTask | undefined
+    +cancelTask(id: string): boolean
+    +processQueue(): void
+    +startDownload(task: DownloadTask): Promise<void>
+    +downloadYouTube(task: DownloadTask): Promise<void>
+    +updateTask(id: string, updates: Partial<DownloadTask>): void
+}
+
+RECTANGLE MediaInfoService {
+    +getMediaInfo(url: string): Promise<any>
+    +runYtDlp(args: string[]): Promise<string>
+}
+
+RECTANGLE Logger {
+    +setLevel(level: LogLevel): void
+    +debug(message: string, ...args: any[]): void
+    +info(message: string, ...args: any[]): void
+    +warn(message: string, ...args: any[]): void
+    +error(message: string, ...args: any[]): void
+    +getLevel(): LogLevel
+}
+
+VideoDownloaderServer --> DownloadService : uses
+VideoDownloaderServer --> MediaInfoService : uses
+VideoDownloaderServer --> Logger : uses
+DownloadService --> Logger : uses
+MediaInfoService --> Logger : uses
+
+' 关系解释和判断:
+note bottom
+  VideoDownloader使用VideoProcessor进行视频处理，
+  并将视频存储在VideoStorage中，同时直接保存视频到VideoStorage。
+  VideoDownloaderServer依赖于DownloadService、MediaInfoService和Logger，
+  这符合各组件之间的职责分离和调用逻辑。
+end note
+
+@enduml
