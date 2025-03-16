@@ -6,6 +6,7 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
+import { BatchDownloadOptions } from '../types/downloader.js';
 import express from 'express';
 import cors from 'cors';
 import { AppConfig } from '../types/config.js';
@@ -40,7 +41,6 @@ export class VideoDownloaderServer {
     
     // 转换配置格式
     const serviceConfig: Config = convertConfig(config);
-    
     // 初始化服务
     this.downloaderService = new DownloaderService(config);
     this.mediaInfoService = new MediaInfoService(config);
@@ -54,7 +54,24 @@ export class VideoDownloaderServer {
     this.setupToolHandlers();
     this.setupErrorHandler();
   }
-
+  
+  public async testBatchDownload() {
+    const urls = [
+      'https://www.bilibili.com/video/BV1Xx411c7mD',
+      'https://www.bilibili.com/video/BV1Yx411c7mE',
+      'https://www.bilibili.com/video/BV1Zx411c7mF'
+    ];
+    const result = await this.downloaderService.handleBatchDownload({
+      urls,
+      format: 'mp4',
+      outputDir: './downloads',
+      noPlaylist: true,
+      audioOnly: false,
+      subtitles: false,
+      speedLimit: '1M'
+    });
+    console.log(result);
+  }
   private setupExpressApp() {
     // 启用CORS和JSON请求体解析
     this.expressApp.use(cors());
@@ -68,6 +85,32 @@ export class VideoDownloaderServer {
     this.expressApp.get('/api/tasks', downloadController.getAllTasks);
     this.expressApp.get('/api/tasks/:id', downloadController.getTask);
     this.expressApp.delete('/api/tasks/:id', downloadController.cancelTask);
+    
+    // B站热门视频接口
+    this.expressApp.get('/api/bilibili/popular', async (req, res) => {
+      try {
+        const result = await this.downloaderService.getBilibiliPopularVideos();
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({
+          error: '获取B站热门视频失败',
+          message: error instanceof Error ? error.message : '未知错误'
+        });
+      }
+    });
+
+    // 抖音热门视频接口
+    this.expressApp.get('/api/douyin/popular', async (req, res) => {
+      try {
+        const result = await this.downloaderService.getDouyinPopularVideos();
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({
+          error: '获取抖音热门视频失败',
+          message: error instanceof Error ? error.message : '未知错误'
+        });
+      }
+    });
   }
 
   private setupErrorHandler() {
@@ -159,6 +202,91 @@ export class VideoDownloaderServer {
             },
           },
         },
+        {
+          name: 'download_douyin_video',
+          description: '下载抖音视频',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              url: {
+                type: 'string',
+                description: '抖音视频URL',
+              },
+            },
+            required: ['url'],
+          },
+        },
+        {
+          name: 'get_douyin_popular_videos',
+          description: '获取抖音播放量较高的视频地址集合',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+          },
+        },
+        {
+          name: 'get_bilibili_popular_videos',
+          description: '获取B站播放量较高的视频地址集合',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+          },
+        },
+        {
+          name: 'get_task_status',
+          description: '获取下载任务的状态',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              taskId: {
+                type: 'string',
+                description: '下载任务ID'
+              }
+            },
+            required: ['taskId']
+          },
+        },
+        {
+          name: 'batch_download_videos',
+          description: '批量下载多个视频',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              urls: {
+                type: 'array',
+                items: {
+                  type: 'string'
+                },
+                description: '视频URL列表',
+              },
+              format: {
+                type: 'string',
+                description: '视频格式 (例如: "best", "mp4", "720p")',
+              },
+              outputDir: {
+                type: 'string',
+                description: '下载目录路径',
+              },
+              noPlaylist: {
+                type: 'boolean',
+                description: '设置为true只下载单个视频而非整个播放列表',
+              },
+              audioOnly: {
+                type: 'boolean',
+                description: '只提取音频',
+              },
+              subtitles: {
+                type: 'boolean',
+                description: '下载字幕',
+              },
+              speedLimit: {
+                type: 'string',
+                description: '下载速度限制 (例如: "50K", "1M")',
+              },
+            },
+            required: ['urls'],
+          },
+        },
       ],
     }));
   }
@@ -188,6 +316,63 @@ export class VideoDownloaderServer {
           }
           const { path } = (request.params.arguments || {}) as { path?: string };
           return await this.downloaderService.listDownloads(path);
+        }
+        case 'download_douyin_video': {
+          if (!request.params.arguments || typeof request.params.arguments !== 'object') {
+            throw new McpError(ErrorCode.InvalidParams, '无效的下载参数');
+          }
+          return await this.downloaderService.handleDownload(request.params.arguments);
+        }
+        case 'get_douyin_popular_videos': {
+          return await this.downloaderService.getDouyinPopularVideos();
+        }
+        case 'get_bilibili_popular_videos': {
+          return await this.downloaderService.getBilibiliPopularVideos();
+        }
+        case 'get_task_status': {
+          if (!request.params.arguments || typeof request.params.arguments !== 'object') {
+            throw new McpError(ErrorCode.InvalidParams, '无效的参数');
+          }
+          
+          const { taskId } = request.params.arguments as { taskId?: string };
+          if (!taskId) {
+            throw new McpError(ErrorCode.InvalidParams, '需要提供任务ID');
+          }
+
+          const status = this.downloaderService.getTaskStatus(taskId);
+          if (!status) {
+            throw new McpError(ErrorCode.InvalidParams, '找不到指定的下载任务');
+          }
+
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify(status)
+            }]
+          };
+        }
+        case 'batch_download_videos': {
+          if (!request.params.arguments || typeof request.params.arguments !== 'object') {
+            throw new McpError(ErrorCode.InvalidParams, '无效的批量下载参数');
+          }
+          
+          const { urls, format, outputDir, noPlaylist, audioOnly, subtitles, speedLimit } = request.params.arguments as Record<string, any>;
+          
+          if (!Array.isArray(urls) || urls.length === 0) {
+            throw new McpError(ErrorCode.InvalidParams, '需要提供有效的URL列表');
+          }
+
+          const batchOptions: BatchDownloadOptions = {
+            urls,
+            format,
+            outputDir,
+            noPlaylist,
+            audioOnly,
+            subtitles,
+            speedLimit
+          };
+
+          return await this.downloaderService.handleBatchDownload(batchOptions);
         }
         default:
           throw new McpError(

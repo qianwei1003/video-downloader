@@ -14,6 +14,7 @@ export interface DownloadConfig {
   concurrentDownloads: number;
   retryAttempts: number;
   timeout: number;
+  defaultDownloader?: 'yt-dlp' | 'you-get' | 'annie' | 'aria2';
 }
 
 /**
@@ -57,4 +58,11 @@ export interface DownloadTask {
   error?: string;
   createdAt: Date;
   updatedAt: Date;
+  retryCount?: number;
+  quality?: string;
+  format?: 'video' | 'audio';
+  downloader?: 'yt-dlp' | 'you-get' | 'annie' | 'aria2';
 }
+
+// 从 downloader.ts 导出其他类型
+export * from './downloader.js';
