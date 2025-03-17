@@ -60,9 +60,20 @@ export interface AdvancedDownloadOptions {
   IPv6Block?: string;
 }
 
+export interface PopularVideo {
+  id: string;
+  title: string;
+  description?: string;
+  thumbnailUrl?: string;
+  url: string;
+  viewCount?: number;
+  uploadDate?: string;
+}
+
 export interface IPlatform {
   getName(): string;
   isSupported(url: string): boolean;
   getVideoInfo(url: string): Promise<VideoInfo>;
   downloadVideo(url: string, options: DownloadOptions & AdvancedDownloadOptions): Promise<string>;
+  getPopularVideos(count?: number): Promise<PopularVideo[]>;
 }

@@ -2,7 +2,12 @@
   "extends": "./tsconfig.paths.json",
   "compilerOptions": {
     "target": "es2022",
-    "module": "commonjs",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "resolveJsonModule": true,
+    "allowJs": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
     "lib": ["es2022", "dom"],
     "strict": true,
     "esModuleInterop": true,

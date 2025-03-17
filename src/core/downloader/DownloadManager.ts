@@ -28,17 +28,14 @@ export class DownloadManager {
       if (isPlatformEnabled(platformName)) {
         try {
           this.registry.registerFactory(factory);
-          this.logger.info(`已注册平台: ${platformName}`);
         } catch (error) {
           this.logger.error(`注册平台失败 ${platformName}:`, error);
         }
-      } else {
-        this.logger.info(`平台未启用: ${platformName}`);
       }
     }
   }
 
-  private getPlatform(url: string) {
+  getPlatform(url: string) {
     return this.registry.createPlatform(url);
   }
 
@@ -68,9 +65,7 @@ export class DownloadManager {
     }
 
     try {
-      const filePath = await platform.downloadVideo(url, options);
-      this.logger.info(`视频已保存到: ${filePath}`);
-      return filePath;
+      return await platform.downloadVideo(url, options);
     } catch (error) {
       this.logger.error('下载失败:', error);
       throw error;

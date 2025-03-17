@@ -21,7 +21,7 @@ async function main() {
         await setConsoleEncoding();
 
         // 启动应用
-        const app = spawn('npx', ['ts-node', '-r', 'tsconfig-paths/register', 'src/index.ts'], {
+        const app = spawn(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['cross-env', 'ts-node', '-r', 'tsconfig-paths/register', 'src/index.ts'], {
             stdio: 'inherit',
             env: {
                 ...process.env,

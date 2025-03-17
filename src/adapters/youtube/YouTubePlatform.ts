@@ -1,7 +1,7 @@
 import ytdl from 'ytdl-core';
 import { createWriteStream } from 'fs';
 import { join } from 'path';
-import { IPlatform, VideoInfo, VideoFormat, DownloadOptions, AdvancedDownloadOptions } from '@core/platform/IPlatform';
+import { IPlatform, VideoInfo, VideoFormat, DownloadOptions, AdvancedDownloadOptions, PopularVideo } from '@core/platform/IPlatform';
 import { Logger } from '@lib/logger';
 import { withRetry } from '@utils/retry';
 import { YouTubeAuthProvider } from './YouTubeAuthProvider';
@@ -27,6 +27,47 @@ export class YouTubePlatform implements IPlatform {
 
   isSupported(url: string): boolean {
     return ytdl.validateURL(url);
+  }
+
+  async getPopularVideos(count: number = 20): Promise<PopularVideo[]> {
+    try {
+      this.logger.info('获取YouTube热门视频...');
+      const credentials = this.authProvider.getCredentials();
+      if (!credentials || !credentials.token) {
+        throw new Error('需要认证才能获取热门视频');
+      }
+
+      const response = await fetch(
+        `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&chart=mostPopular&maxResults=${count}&regionCode=US`, {
+        headers: {
+          'Authorization': `Bearer ${credentials.token}`
+        },
+        method: 'GET'
+      });
+
+      if (!response.ok) {
+        throw new Error(`获取热门视频失败: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      return data.items.map((video: any) => ({
+        id: video.id,
+        title: video.snippet.title,
+        description: video.snippet.description,
+        thumbnailUrl: video.snippet.thumbnails.high?.url,
+        url: `https://www.youtube.com/watch?v=${video.id}`,
+        viewCount: parseInt(video.statistics.viewCount),
+        uploadDate: video.snippet.publishedAt
+      }));
+    } catch (error) {
+      if (error instanceof Error) {
+        this.logger.error('获取热门视频失败:', error.message);
+      } else {
+        this.logger.error('获取热门视频失败:', error);
+      }
+      throw error;
+    }
   }
 
   async getVideoInfo(url: string): Promise<VideoInfo> {

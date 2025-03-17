@@ -3,6 +3,14 @@
   "autoStartServer": true,
   "defaultQuality": "highest",
   "language": "zh-CN",
+  "batchDownload": {
+    "enabled": true,
+    "concurrentLimit": 3,
+    "retryCount": 3,
+    "retryDelay": 2000,
+    "autoRetryFailed": true,
+    "outputTemplate": "${title}-${quality}"
+  },
   "platforms": {
     "youtube": {
       "enabled": true,

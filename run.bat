@@ -1,31 +1,29 @@
-@echo off
+@echo on
 chcp 65001
 
-echo 正在初始化应用程序...
+echo Starting initialization...
+
+:: 显示当前目录和环境信息
+echo Current directory: %CD%
+echo Node version:
+call node -v
+echo TypeScript version:
+call npx tsc -v
 
 :: 检查 node_modules 是否存在
 if not exist "node_modules" (
-    echo 正在安装依赖...
+    echo Installing dependencies...
     call npm install
 )
 
-:: 编译TypeScript
-echo 正在编译项目...
-call npm run build
-
-:: 如果编译成功，启动应用
-if %errorlevel% == 0 (
-    echo 启动应用程序...
-    node scripts/run.js
-) else (
-    echo 编译失败，请检查错误信息
-    echo 按任意键继续...
-    pause >nul
-    exit /b 1
+:: 创建下载目录
+if not exist "downloads" (
+    echo Creating downloads directory...
+    mkdir downloads
 )
 
-if %errorlevel% neq 0 (
-    echo 程序异常退出，错误代码：%errorlevel%
-    echo 按任意键继续...
-    pause >nul
-)
+:: 启动 MCP 服务器
+echo Starting MCP server...
+echo Command: npx ts-node --esm -r tsconfig-paths/register src/mcp/index.ts
+set NODE_OPTIONS=--loader ts-node/esm
+call npx ts-node --esm -r tsconfig-paths/register src/mcp/index.ts

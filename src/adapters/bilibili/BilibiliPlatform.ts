@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { createWriteStream } from 'fs';
 import { join } from 'path';
-import { IPlatform, VideoInfo, VideoFormat, DownloadOptions, AdvancedDownloadOptions } from '@core/platform/IPlatform';
+import { IPlatform, VideoInfo, VideoFormat, DownloadOptions, AdvancedDownloadOptions, PopularVideo } from '@core/platform/IPlatform';
 import { Logger } from '@lib/logger';
 import { getPlatformConfig } from '@lib/config/platforms';
 
@@ -171,6 +171,40 @@ export class BilibiliPlatform implements IPlatform {
   private async cleanupTempFiles(files: string[]): Promise<void> {
     const { unlink } = require('fs/promises');
     await Promise.all(files.map(file => unlink(file).catch(() => {})));
+  }
+
+  async getPopularVideos(count: number = 20): Promise<PopularVideo[]> {
+    try {
+      this.logger.info('获取B站热门视频...');
+      const { data } = await axios.get(`${this.API_BASE}/web-interface/popular`, {
+        params: { ps: count, pn: 1 },
+        headers: {
+          'User-Agent': this.config.options.userAgent,
+          ...(this.config.options.cookies ? { 'Cookie': this.config.options.cookies } : {})
+        }
+      });
+
+      if (data.code !== 0) {
+        throw new Error(`获取热门视频失败: ${data.message}`);
+      }
+
+      return data.data.list.map((video: any) => ({
+        id: video.bvid,
+        title: video.title,
+        description: video.desc,
+        thumbnailUrl: video.pic,
+        url: `https://www.bilibili.com/video/${video.bvid}`,
+        viewCount: video.stat.view,
+        uploadDate: new Date(video.pubdate * 1000).toISOString()
+      }));
+    } catch (error) {
+      if (error instanceof Error) {
+        this.logger.error('获取热门视频失败:', error.message);
+      } else {
+        this.logger.error('获取热门视频失败:', error);
+      }
+      throw error;
+    }
   }
 
   async downloadVideo(url: string, options: DownloadOptions & AdvancedDownloadOptions): Promise<string> {
