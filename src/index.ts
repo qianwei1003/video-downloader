@@ -1,73 +1,32 @@
 #!/usr/bin/env node
-import { Server } from '@modelcontextprotocol/sdk';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ErrorCode,
   ListToolsRequestSchema,
   McpError,
-} from '@modelcontextprotocol/sdk/types.js';
-import { exec } from 'yt-dlp-exec';
+} from "@modelcontextprotocol/sdk/types.js";
+import { getVideoInfo, downloadVideo, batchDownload, taskManager, searchVideos } from './services/bilibili.js';
+import { CallToolRequest } from './types/bilibili.js';
 
-interface DownloadArgs {
-  url: string;
-  format?: string;
-  output?: string;
-}
-
-class VideoDownloaderServer {
+class BilibiliServer {
   private server: Server;
 
   constructor() {
     this.server = new Server(
       {
-        name: 'video-downloader',
-        version: '1.0.0',
+        name: 'bilibili-downloader',
+        version: '0.1.0',
       },
       {
         capabilities: {
-          resources: {},
-          tools: {
-            download_video: {
-              description: '从YouTube或其他支持的平台下载视频',
-              schema: {
-                type: 'object',
-                properties: {
-                  url: {
-                    type: 'string',
-                    description: '视频URL',
-                  },
-                  format: {
-                    type: 'string',
-                    description: '视频格式 (默认: best)',
-                  },
-                  output: {
-                    type: 'string',
-                    description: '输出文件名',
-                  },
-                },
-                required: ['url'],
-              }
-            },
-            get_video_info: {
-              description: '获取视频信息',
-              schema: {
-                type: 'object',
-                properties: {
-                  url: {
-                    type: 'string',
-                    description: '视频URL',
-                  },
-                },
-                required: ['url'],
-              }
-            }
-          },
+          tools: {},
         },
       }
     );
 
-    this.setupHandlers();
+    this.setupToolHandlers();
     
     this.server.onerror = (error: Error) => console.error('[MCP Error]', error);
     process.on('SIGINT', async () => {
@@ -76,74 +35,213 @@ class VideoDownloaderServer {
     });
   }
 
-  private setupHandlers() {
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const args = request.params.arguments as any;
-      switch (request.params.name) {
-        case 'download_video':
-          return this.handleDownloadVideo(args as DownloadArgs);
-        case 'get_video_info':
-          return this.handleGetVideoInfo(args as { url: string });
-        default:
+  private setupToolHandlers() {
+    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: [
+        {
+          name: 'search',
+          description: '搜索B站视频',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              keyword: {
+                type: 'string',
+                description: '搜索关键词'
+              },
+              page: {
+                type: 'number',
+                description: '页码',
+                default: 1
+              },
+              pageSize: {
+                type: 'number',
+                description: '每页结果数',
+                default: 20
+              },
+              order: {
+                type: 'string',
+                enum: ['pubdate', 'click', 'scores'],
+                description: '排序方式: 发布时间/播放量/综合评分',
+                default: 'scores'
+              }
+            },
+            required: ['keyword']
+          },
+        },
+        {
+          name: 'video-info',
+          description: '获取B站视频信息，包括标题、作者、时长等',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              url: {
+                type: 'string',
+                description: 'B站视频URL'
+              }
+            },
+            required: ['url']
+          },
+        },
+        {
+          name: 'download',
+          description: '下载B站视频',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              url: {
+                type: 'string',
+                description: 'B站视频URL'
+              },
+              quality: {
+                type: 'string',
+                description: '视频质量(360p/480p/720p/1080p)',
+                enum: ['360p', '480p', '720p', '1080p'],
+                default: '720p'
+              },
+              output: {
+                type: 'string',
+                description: '输出文件路径（可选）'
+              }
+            },
+            required: ['url']
+          },
+        },
+        {
+          name: 'batch-download',
+          description: '批量下载B站视频',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              urls: {
+                type: 'array',
+                items: {
+                  type: 'string'
+                },
+                description: 'B站视频URL列表'
+              },
+              quality: {
+                type: 'string',
+                description: '视频质量(360p/480p/720p/1080p)',
+                enum: ['360p', '480p', '720p', '1080p'],
+                default: '720p'
+              },
+              outputDir: {
+                type: 'string',
+                description: '输出目录路径（可选）'
+              },
+              concurrency: {
+                type: 'number',
+                description: '同时下载的最大任务数（可选，默认3）',
+                minimum: 1,
+                maximum: 5,
+                default: 3
+              }
+            },
+            required: ['urls']
+          },
+        },
+      ],
+    }));
+
+    this.server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest) => {
+      const { name, arguments: args } = request.params;
+
+      try {
+        if (name === 'video-info') {
+          if (!args.url) {
+            throw new Error('URL is required for video-info');
+          }
+          const info = await getVideoInfo(args.url);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(info, null, 2),
+              },
+            ],
+          };
+        } else if (name === 'download') {
+          if (!args.url) {
+            throw new Error('URL is required for download');
+          }
+          const outputPath = await downloadVideo(args.url, {
+            quality: args.quality,
+            output: args.output,
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Video downloaded successfully to: ${outputPath}`,
+              },
+            ],
+          };
+        } else if (name === 'batch-download') {
+          if (!args.urls || !Array.isArray(args.urls)) {
+            throw new Error('URLs array is required for batch-download');
+          }
+          const tasks = await batchDownload({
+            urls: args.urls,
+            quality: args.quality,
+            outputDir: args.outputDir,
+            concurrency: args.concurrency,
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(tasks.map(t => ({
+                  id: t.id,
+                  url: t.url,
+                  status: t.status.status,
+                })), null, 2),
+              },
+            ],
+          };
+        } else if (name === 'search') {
+          if (!args.keyword) {
+            throw new Error('搜索关键词不能为空');
+          }
+          const results = await searchVideos({
+            keyword: args.keyword,
+            page: args.page,
+            pageSize: args.pageSize,
+            order: args.order as 'pubdate' | 'click' | 'scores'
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(results, null, 2),
+              },
+            ],
+          };
+        } else {
           throw new McpError(
             ErrorCode.MethodNotFound,
-            '未知工具: ' + request.params.name
+            `Unknown tool: ${name}`
           );
+        }
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: error instanceof Error ? error.message : String(error),
+            },
+          ],
+          isError: true,
+        };
       }
     });
-  }
-
-  private async handleDownloadVideo(args: DownloadArgs) {
-    try {
-      const result = await exec(args.url, {
-        format: args.format || 'best',
-        output: args.output,
-      });
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `视频下载成功:\n${result}`,
-          },
-        ],
-      };
-    } catch (error: any) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        `下载失败: ${error.message || '未知错误'}`
-      );
-    }
-  }
-
-  private async handleGetVideoInfo(args: { url: string }) {
-    try {
-      const result = await exec(args.url, {
-        dumpJson: true,
-      });
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: result,
-          },
-        ],
-      };
-    } catch (error: any) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        `获取信息失败: ${error.message || '未知错误'}`
-      );
-    }
   }
 
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error('视频下载MCP服务器正在运行...');
+    console.error('Bilibili MCP server running on stdio');
   }
 }
 
-const server = new VideoDownloaderServer();
+const server = new BilibiliServer();
 server.run().catch(console.error);
