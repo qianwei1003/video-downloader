@@ -4,6 +4,14 @@ import { mkdir } from 'fs/promises';
 import path from 'path';
 import { VideoInfo, DownloadOptions, DownloadTask, TaskStatus, BatchDownloadOptions, SearchOptions, SearchResult } from '../types/bilibili.js';
 import { v4 as uuidv4 } from 'uuid';
+import { configManager } from '../config/settings.js';
+
+function formatFilename(title: string, quality: string, format: string): string {
+  return format
+    .replace('{title}', title)
+    .replace('{quality}', quality)
+    .replace(/[<>:"/\\|?*]/g, '_') + '.mp4';
+}
 
 class TaskManager {
   private queue: DownloadTask[] = [];
@@ -69,20 +77,20 @@ let taskManager = new TaskManager();
 export async function batchDownload(options: BatchDownloadOptions): Promise<DownloadTask[]> {
   const { urls, concurrency = 3, outputDir, ...downloadOptions } = options;
   
-  // 重置任务管理器的并发数
   taskManager = new TaskManager(concurrency);
   
-  // 创建输出目录
-  if (outputDir) {
-    await mkdir(outputDir, { recursive: true });
-  }
+  const settings = configManager.getDownloadSettings();
+  const targetDir = outputDir || settings.defaultDir;
+  await mkdir(targetDir, { recursive: true });
   
-  // 添加所有下载任务
   const tasks = await Promise.all(
     urls.map(async (url) => {
+      const info = await getVideoInfo(url);
+      const quality = downloadOptions.quality || '720p';
+      const filename = formatFilename(info.title, quality, settings.filenameFormat);
       const taskOptions: DownloadOptions = {
         ...downloadOptions,
-        output: outputDir ? path.join(outputDir, `${await getVideoTitle(url)}.mp4`) : undefined
+        output: path.join(targetDir, settings.createSubDirs ? new Date().toISOString().split('T')[0] : '', filename)
       };
       return taskManager.addTask(url, taskOptions);
     })
@@ -93,7 +101,7 @@ export async function batchDownload(options: BatchDownloadOptions): Promise<Down
 
 async function getVideoTitle(url: string): Promise<string> {
   const info = await getVideoInfo(url);
-  return info.title.replace(/[<>:"/\\|?*]/g, '_'); // 替换非法文件名字符
+  return info.title.replace(/[<>:"/\\|?*]/g, '_');
 }
 
 export async function getVideoInfo(url: string): Promise<VideoInfo> {
@@ -138,16 +146,19 @@ export async function downloadVideo(url: string, options: DownloadOptions = {}):
       throw new Error('Invalid Bilibili URL');
     }
 
-    // 获取视频信息
+    const settings = configManager.getDownloadSettings();
     const info = await getVideoInfo(url);
+    const quality = options.quality || '720p';
+    const filename = formatFilename(info.title, quality, settings.filenameFormat);
     
-    // 确定输出路径
-    const outputPath = options.output || path.join(process.cwd(), `${info.title}.mp4`);
+    const outputPath = options.output || path.join(
+      settings.defaultDir,
+      settings.createSubDirs ? new Date().toISOString().split('T')[0] : '',
+      filename
+    );
     
-    // 获取视频流URL
-    const playUrl = await getPlayUrl(bvid, options.quality || '720p');
+    const playUrl = await getPlayUrl(bvid, quality);
     
-    // 下载视频流
     const response = await axios({
       method: 'GET',
       url: playUrl,
@@ -158,10 +169,7 @@ export async function downloadVideo(url: string, options: DownloadOptions = {}):
       }
     });
 
-    // 确保输出目录存在
     await mkdir(path.dirname(outputPath), { recursive: true });
-    
-    // 将视频流写入文件
     const writer = createWriteStream(outputPath);
     response.data.pipe(writer);
 
@@ -177,58 +185,61 @@ export async function downloadVideo(url: string, options: DownloadOptions = {}):
   }
 }
 
-import { playwrightSearch } from './playwright-search.js';
-
 export async function searchVideos(options: SearchOptions): Promise<SearchResult[]> {
   try {
     const { keyword, page = 1, pageSize = 20, order = 'scores' } = options;
     
     try {
-      // 首先尝试使用API搜索
-      const params = {
-        keyword,
-        page,
-        pagesize: pageSize,
-        order,
-        search_type: 'video',
-      };
+      console.log('开始搜索视频:', keyword);
+      const searchUrl = new URL('https://api.bilibili.com/x/web-interface/wbi/search/type');
+      searchUrl.searchParams.set('search_type', 'video');
+      searchUrl.searchParams.set('__refresh__', Date.now().toString());
+      searchUrl.searchParams.set('keyword', keyword);
+      searchUrl.searchParams.set('page', page.toString());
+      searchUrl.searchParams.set('order', order);
+      searchUrl.searchParams.set('duration', '0');
+      searchUrl.searchParams.set('tids', '0');
+      searchUrl.searchParams.set('category_id', '');
 
-      const response: AxiosResponse = await axios.get('https://app.bilibili.com/x/v2/search/type', {
-        params: {
-          ...params,
-          device: 'phone',
-          from_source: 'app_search',
-          from: 'search',
-          type: 1,
-          plat: 2
-        },
+      const response = await axios.get(searchUrl.toString(), {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 BiliApp/7.12.0',
-          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'Referer': 'https://search.bilibili.com',
+          'Accept': 'application/json, text/plain, */*',
+          'Origin': 'https://search.bilibili.com',
+          'Cookie': `buvid3=${Math.random().toString(36).substring(2)};CURRENT_FNVAL=4048;b_nut=${Date.now()};`,
           'Accept-Language': 'zh-CN,zh;q=0.9',
-          'Origin': 'https://app.bilibili.com',
-          'Referer': 'https://app.bilibili.com',
+          'Accept-Encoding': 'gzip, deflate, br',
           'Connection': 'keep-alive'
-        }
+        },
+        timeout: 10000
       });
 
+      console.log('API响应状态:', response.status);
+
       if (response.data.code !== 0) {
-        throw new Error(response.data.message || '搜索失败');
+        throw new Error(`搜索API返回错误: ${response.data.message || '未知错误'}`);
       }
 
-      const results = response.data.data.result || [];
-      return results.map((item: any) => ({
+      if (!response.data.data?.result || !Array.isArray(response.data.data.result)) {
+        console.log('API返回数据无结果');
+        return [];
+      }
+
+      const results = (response.data.data?.result || []).slice(0, pageSize).map((item: any) => ({
         id: item.bvid,
-        title: item.title.replace(/<[^>]+>/g, ''), // 移除HTML标签
-        author: item.author,
-        duration: item.duration,
-        views: item.play,
-        pubDate: new Date(item.pubdate * 1000).toISOString()
+        title: (item.title || '').replace(/<[^>]+>/g, ''),
+        author: item.author || '',
+        duration: item.duration || '',
+        views: parseInt((item.play || '0').toString().replace(/[^0-9]/g, ''), 10),
+        pubDate: item.pubdate ? new Date(item.pubdate * 1000).toISOString() : new Date().toISOString()
       }));
-    } catch (apiError) {
-      console.log('API搜索失败，切换到浏览器模式...');
-      // API搜索失败时，使用Playwright进行浏览器搜索
-      return await playwrightSearch.search(keyword);
+
+      console.log(`处理完成，找到 ${results.length} 个视频`);
+      return results;
+    } catch (error) {
+      console.error('搜索失败:', error instanceof Error ? error.message : String(error));
+      throw error;
     }
   } catch (error) {
     if (error instanceof Error) {
@@ -239,14 +250,12 @@ export async function searchVideos(options: SearchOptions): Promise<SearchResult
 }
 
 async function getPlayUrl(bvid: string, quality: string): Promise<string> {
-  // 首先获取视频的cid
   const cidResponse = await axios.get(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`);
   if (cidResponse.data.code !== 0) {
     throw new Error(cidResponse.data.message || 'Failed to get video CID');
   }
   const cid = cidResponse.data.data.cid;
 
-  // 获取播放URL
   const qnMap: Record<string, number> = {
     '1080p': 80,
     '720p': 64,

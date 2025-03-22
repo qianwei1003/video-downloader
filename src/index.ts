@@ -7,7 +7,8 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
-import { getVideoInfo, downloadVideo, batchDownload, taskManager, searchVideos } from './services/bilibili.js';
+import { getVideoInfo, downloadVideo, batchDownload, taskManager } from './services/bilibili.js';
+import { playwrightSearch } from './services/playwright-search.js';
 import { CallToolRequest } from './types/bilibili.js';
 
 class BilibiliServer {
@@ -202,20 +203,25 @@ class BilibiliServer {
           if (!args.keyword) {
             throw new Error('搜索关键词不能为空');
           }
-          const results = await searchVideos({
-            keyword: args.keyword,
-            page: args.page,
-            pageSize: args.pageSize,
-            order: args.order as 'pubdate' | 'click' | 'scores'
-          });
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(results, null, 2),
-              },
-            ],
-          };
+          try {
+            console.log('开始搜索视频:', args.keyword);
+            const results = await playwrightSearch.search(
+              args.keyword, 
+              args.order || 'scores'
+            );
+            console.log('搜索结果数量:', results.length);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(results, null, 2),
+                },
+              ],
+            };
+          } catch (searchError) {
+            console.error('搜索失败:', searchError);
+            throw new Error(`搜索失败: ${searchError instanceof Error ? searchError.message : String(searchError)}`);
+          }
         } else {
           throw new McpError(
             ErrorCode.MethodNotFound,
@@ -223,11 +229,18 @@ class BilibiliServer {
           );
         }
       } catch (error) {
+        console.error('MCP工具执行错误:', error instanceof Error ? error.message : String(error));
+        if (error instanceof Error && error.stack) {
+          console.error('错误堆栈:', error.stack);
+        }
         return {
           content: [
             {
               type: 'text',
-              text: error instanceof Error ? error.message : String(error),
+              text: JSON.stringify({
+                error: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined
+              }, null, 2),
             },
           ],
           isError: true,

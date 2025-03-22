@@ -1,0 +1,7 @@
+{
+  "downloadSettings": {
+    "defaultDir": "downloads",
+    "createSubDirs": true,
+    "filenameFormat": "{title}_{quality}"
+  }
+}
